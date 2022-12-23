@@ -1,0 +1,1312 @@
+---
+title: "R script for the paper *The cumulative impacts of climate change induced droughts and air pollutants on
+the decline of Norway spruce (Picea abies) in Switzerland based on 37 years of
+forest monitoring* by Tresch *et* al. 2022"
+author: "R codes are written by Simon Tresch , Institute for Applied Plant Biology (IAP)"
+
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  bookdown::pdf_document2:
+      toc: true
+      toc_depth: 3
+      number_sections: true
+urlcolor: gray
+linkcolor: gray
+      
+bibliography: IAP.bib
+link-citations: yes
+
+
+---
+
+<!-- # ```{r setup, include=FALSE} -->
+<!-- # knitr::opts_chunk$set(echo = TRUE) -->
+<!-- # ``` -->
+
+<!-- {r, results='asis', echo=FALSE} -->
+<!-- with pander   pander(summary(mtcars[, x])) -->
+
+
+**Important notes**
+This   [RMarkdown](https://bookdown.org/yihui/rmarkdown) was created using the R version 4.1.1 [@RCore2021].
+
+This scripts includes data preparation and all statistical models including model diagnostics and plots used for the paper.
+
+All codes are coded by the main authors, based on literature given in the main paper and supplementary material. Some R codes for big plots are not displayed in the PDF output but they can be found in the .RMD file.
+
+In case of any questions please contact the main author.
+
+Please cite the main paper Tresch *et* al. 2022.
+
+
+```{r RMD setup, include=FALSE}
+library(bookdown)
+
+library(pander) # Tabellen Darstellen im R Markdown
+panderOptions('knitr.auto.asis', FALSE)
+
+```
+
+# Used packages
+```{r setup,echo = T, message=FALSE}
+library(Matrix);library(tidyverse) 
+```
+Used for data manipulation (dplyr) and plotting (ggplot) see [@Wickham2019].
+
+```{r setup2,echo = T, message=FALSE}
+library(latex2exp) # LaTex expressions for plots
+library(ggpubr) # multiple ggplots
+library(xtable) # LaTex table output
+library(faraway) # calculation of VIF
+library(Hmisc) # correlation of variables
+library(corrplot)# matrix of the p-value of the correlation
+library(lubridate)# passing to a long format
+library(timetk) #correlation-analysis-in-time-series-data
+
+
+
+```
+
+
+```{r setup4,echo = T, message=FALSE}
+library(splines) #natural cubic splines
+library(brms) # Bayesian multilevel models in R
+library(bayesplot) # Visualization in Bayesian workflow
+
+```
+Bayesian multilevel models in R were conducted using the brms package from [@Burkner2017] and posterior predictive checks with the help of the bayesplot package [@Gabry2019].
+
+\clearpage
+# Descriptive statistics
+
+## Load data
+
+See Material and Methods section of the main paper for more information about the study sites, which are part of the Intercantonal long-term forest observation program running since 38 years [@Braun2021_WDB_EN].
+
+
+
+```{r sites, echo = T, message=F,warning=F,fig.align = "center"}
+## Load long-term forest monitoring data
+
+mydata<-read_delim("data/final_data_mortality_2022.csv")
+head(mydata)
+
+mydata <- mydata %>% 
+  mutate(sites=as.factor(sites))
+
+```
+
+## Number of dead trees
+```{r descr1, echo = T, message=F,warning=F,fig.align = "center"}
+
+(sum(mydata$trees_living) + sum(mydata$trees_died))
+# 131814 trees have been observed 1985-2021.
+
+sum(mydata$trees_died) 
+#In total 1183 trees died from 1985-2021.
+
+mortality_rate <-mydata %>%
+  group_by(year_fact) %>%
+  summarise(living_sum=sum(trees_living),died_sum=sum(trees_died)) %>%
+  mutate(mortality=100*died_sum/(living_sum+died_sum)) %>%
+  ungroup() 
+
+# Mortality over all years
+(long_term_average_mortality<-mean(mortality_rate$mortality, na.rm=T)) #  0.71 % 1985-2021
+```
+```{r descr1plot, echo = F, message=F,warning=F,fig.align = "center"}
+
+# mortality per year
+mortality_rate_plot <-ggplot(data=mortality_rate,aes(x=year_fact, y=mortality/100)) + 
+  geom_line(size=0.5)+
+  geom_hline(yintercept=long_term_average_mortality/100, colour="grey20",
+             linetype="dotted", size=0.5)+
+  annotate("text", x = 1994.3, y = 0.0088, size = 2.2,  colour="grey20", lineheight =
+             .9,label = "Long-term avarage 1985-2021: 0.71%",hjust = 1)+
+   scale_y_continuous(expand = c(0.015,0),
+                      limits = c(0,0.06),labels = scales::percent_format(accuracy = 1),
+                      breaks =c(0,0.01,0.02,0.03,0.04,0.05,0.06)) +
+   geom_point(size=3, colour="white") + 
+  geom_point(size=2) + 
+  scale_x_continuous(breaks=seq(1985,2020,5))+
+  theme_classic()+
+  theme(axis.title=element_text(size=9),axis.ticks = element_line(size=0.1), axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 10, colour = "black"),axis.text.x = element_text(size =10, colour = "black"),axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),panel.border = element_rect(colour = "black",
+    fill=NA, size=0.1),panel.grid.minor=element_blank(),panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+    legend.title=element_text(),legend.justification = c(1, 1), legend.position = c(1,1),legend.direction="horizontal",legend.key.height=unit(1,"line"),
+    plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position =
+          c(0.315,0.99),legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")+
+  labs(x="", y= TeX("Annual average mortality rate of Picea abies"))+
+  geom_curve(aes(x = 1997, y = 0.013, xend = 1999, yend = 0.01), 
+             arrow = arrow(length = unit(0.07, "inch")), size = 0.4, color = "darkblue", curvature = 0.3)+
+  annotate("text", x = 1997, y = 0.015, size = 2.8, color = "darkblue", 
+           lineheight = .9,label = "Winterstorm 'Lothar'")+
+  geom_curve(aes(x = 2002, y = 0.023, xend = 2004, yend = 0.02), arrow = arrow(
+    length = unit(0.07, "inch")), size = 0.4, color = "darkred", curvature = 0.3)+
+  annotate("text", x = 2002, y = 0.025, size = 2.8, color = "darkred", 
+           lineheight = .9,label = "Heat wave 2005")+
+geom_curve(aes(x = 2014, y = 0.04, xend = 2016, yend = 0.035), arrow = 
+             arrow(length = unit(0.07, "inch")), size = 0.4, color = "darkred", 
+           curvature = 0.3)+
+  annotate("text", x = 2013.5, y = 0.043, size = 2.8, color = "darkred", 
+           lineheight = .9,label = "Cummulative \n heat waves 2015-2020")
+mortality_rate_plot
+
+
+```
+## Number of study sites
+```{r descr2, echo = T, message=F,warning=F,fig.align = "center"}
+
+sites_per_year <- mydata %>%
+  group_by(year_fact)  %>%
+  summarise(sites_per_year = n())
+
+sites_per_year_plot <-ggplot(data=sites_per_year,aes(x=year_fact, y=sites_per_year)) + 
+  geom_bar(stat="identity", fill="black")+
+  scale_y_continuous(expand = c(0,0),
+                     limits = c(0,82)) +
+  geom_text(aes(label=sites_per_year), vjust=1.6, color="white", size=3.5)+
+   scale_x_continuous(breaks=seq(1985,2025,5))+
+  theme_classic()+
+  labs(x="", y= "Norway spruce sites in the long-term Intercantonal \nForest Observation Program in Switzerland")
+sites_per_year_plot
+
+```
+
+## Variable selection and scaling
+```{r descr3, echo = T, message=F,warning=F,fig.align = "center"}
+
+# explaining variables
+mydata$n_dep_s<-scale(mydata$n_dep, center=TRUE, scale=TRUE) 
+
+# proportion of species mixtures (see for instance Brandl et al. 2020 FEM)
+mydata$conifer_s<-scale(mydata$conifer, center=TRUE, scale=TRUE) 
+
+# age
+mydata$age_s<-scale(mydata$age, center=TRUE, scale=TRUE) 
+
+# soil variables
+mydata$bs_s<-scale(mydata$bs, center=TRUE, scale=TRUE) 
+
+mydata$ph_s<-scale(mydata$ph, center=TRUE, scale=TRUE) 
+
+
+# Nutrients see Braun2021
+mydata$n_s<-scale(mydata$n, center=TRUE, scale=TRUE)
+
+mydata$p_s<-scale(mydata$p, center=TRUE, scale=TRUE)
+
+mydata$k_s<-scale(mydata$k, center=TRUE, scale=TRUE)
+
+mydata$mg_s<-scale(mydata$mg, center=TRUE, scale=TRUE)
+
+mydata$ca_s<-scale(mydata$ca, center=TRUE, scale=TRUE)
+
+mydata$mn_s<-scale(mydata$mn, center=TRUE, scale=TRUE)
+
+
+# nutrient ratios
+mydata$n_k<-mydata$n/mydata$k
+mydata$n_k_s<-scale((mydata$n/mydata$k), center=TRUE, scale=TRUE)# n:K
+mydata$n_p<-mydata$n/mydata$p
+mydata$n_p_s<-scale((mydata$n/mydata$p), center=TRUE, scale=TRUE)# n:p
+mydata$n_mg<-mydata$n/mydata$mg
+mydata$n_mg_s<-scale((mydata$n/mydata$mg), center=TRUE, scale=TRUE)# n:mg
+mydata$n_ca<-mydata$n/mydata$ca
+mydata$n_mn_s<-scale((mydata$n/mydata$mn), center=TRUE, scale=TRUE)# n:mg
+
+# Indicators of drought 
+# potential drought see Braun et al. 2015 SZF
+
+# actual drought see Braun et al. 2015 SZF
+mydata$ETa_ETp_0_s<-scale(mydata$ETa_ETp_0, center=TRUE, scale=TRUE)#lag 0: current year 
+
+mydata$ETa_ETp_1_s<-scale(mydata$ETa_ETp_1, center=TRUE, scale=TRUE)#lag 1: 1 years before
+
+mydata$ETa_ETp_2_s<-scale(mydata$ETa_ETp_2, center=TRUE, scale=TRUE)#lag 2: 2 years before
+
+mydata$ETa_ETp_3_s<-scale(mydata$ETa_ETp_3, center=TRUE, scale=TRUE)#lag 3: 3 years before
+
+mydata$ETa_ETp_4_s<-scale(mydata$ETa_ETp_4, center=TRUE, scale=TRUE)#lag 4: 4 years before
+
+mydata$ETa_ETp_5_s<-scale(mydata$ETa_ETp_5, center=TRUE, scale=TRUE)#lag 5: 5 years before
+
+
+
+# Additional explanatory variables
+mydata$altitude_s<-scale(mydata$altitude, center=TRUE, scale=TRUE)
+
+mydata$year_s<-scale(mydata$year, center=TRUE, scale=TRUE)# to test remaining year effect 
+```
+For drought and temperature variables see [@Braun2015c] and for conifer species mixture variable see [@Brandl2020].
+
+
+
+
+## Total N deposition
+```{r descr4, echo = F, message=F,warning=F,fig.align = "center", fig.width=10,fig.height=10}
+
+ndep_data <- mydata %>%  mutate(sites = fct_reorder(sites, n_dep, .desc = F))
+ndep_data<-ndep_data %>%
+  mutate(long_term_median_n_dep = median(n_dep))
+
+n_dep_hist<-ggplot(ndep_data, aes(y=n_dep, x=sites, colour=year_fact)) +
+  # geom_boxplot()+
+   geom_point()+
+  geom_point(data=(ndep_data %>% group_by(sites) %>%
+  mutate(n_dep_median_sites = median(n_dep)) %>% unique()), aes(x=sites, y =n_dep_median_sites, fill="black"),colour="black", size=2 )+
+
+  geom_hline(aes(yintercept=long_term_median_n_dep), colour="grey20", linetype="dotted", size=0.5)+
+ annotate("text", x = 23, y = 27, size = 2.8,  colour="grey20", lineheight = .9,label = expression(paste("Median 1985-2021: 26 kg N ", ha^-1, " ", a^-1)),hjust = 1)+
+  
+  scale_fill_manual(values = c("Median per site" = "black")) + 
+scale_y_continuous(breaks = c(10, 20,30,40,50,60,70,80))+
+  labs(title="",y= expression(paste("Modelled total N deposition (kg N ", ha^-1, " ", a^-1, ")")), x = "Sites (orderd after N deposition)")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+    theme(legend.position = c(0.09,0.85), axis.title.x=element_text(),axis.text.x=element_text(angle = 45, hjust = 1,size=6),axis.ticks.x=element_blank(),legend.title=element_blank())
+n_dep_hist
+```
+N deposition was modelled according to [@Rihm2019]. All codes for the plot can be found in the .RMD file.
+\clearpage
+## Lagged effects of drought indicator ETa/ETp
+```{r descr5, echo = T, message=F,warning=F,fig.align = "center",fig.width=10,fig.height=10}
+
+mydata$drought_lag <- (mydata$ETa_ETp_0 + mydata$ETa_ETp_1 + 
+          mydata$ETa_ETp_2 + mydata$ETa_ETp_3+ mydata$ETa_ETp_4)/5
+mydata$drought_lag_s<-scale(mydata$drought_lag, center=TRUE, scale=TRUE)
+
+# see Chapter 3 about the drought effect calculation with the poly-lag model approach
+```
+```{r descr5plot, echo = F, message=F,warning=F,fig.align = "center",fig.width=10,fig.height=10}
+
+drought_plot_data<- mydata %>% dplyr::select(ETa_ETp_0,drought_lag,year_fact) %>%
+  gather(groups,measurements,ETa_ETp_0,drought_lag)
+
+drought_plot<-ggplot(drought_plot_data,aes(y=measurements,x=as.factor(as.character(year_fact)),colour=groups)) +
+  scale_x_discrete(breaks = c(1985:2021,1))+
+  geom_boxplot(position=position_dodge(width=0.8))+
+   geom_smooth(method = "gam", se=TRUE,aes(group=groups, colour=groups, fill=groups))+
+  scale_colour_manual(name="", values=c("brown4","black"), labels=c("Drought (ETa/ETp) lag 4 years","Drought (ETa/ETp) no lag"))+
+  scale_fill_manual(name="", values=c( "brown4","black"), labels=c("Drought (ETa/ETp) lag 4 years","Drought (ETa/ETp) no lag"))+
+  
+  labs(title="",y= "Drought indicator ETa/ETp", x = "")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  theme(legend.position = c(0.15,0.1), axis.title.x=element_text(),axis.text.x=element_text(angle = 45, hjust = 1),legend.title=element_blank())
+drought_plot
+```
+
+
+
+# Calculation of lag drought indicator ETa/ETp
+```{r drought, echo = T, message=F,warning=F,fig.align = "center"}
+# Bayesian multilevel binomial lag effect model using orthogonal polynomial
+
+mydata <- mydata %>% 
+  mutate(u0 = (ETa_ETp_0 + ETa_ETp_1 + ETa_ETp_2 + ETa_ETp_3 + ETa_ETp_4+ ETa_ETp_5), #mean
+         u1 = ( 0*ETa_ETp_0 + 1*ETa_ETp_1 + 2*ETa_ETp_2 + 3*ETa_ETp_3 + 4*ETa_ETp_4 + 
+                  5*ETa_ETp_5), #linear (to see if older years are more important, 
+         # weighting of older years is higher in a linear way)
+         u2 = ( 0*ETa_ETp_0 + 1*ETa_ETp_1 + 4*ETa_ETp_2 + 9*ETa_ETp_3 + 16*ETa_ETp_4+ 
+                  25*ETa_ETp_5), #quadratic
+         u3 = ( 0*ETa_ETp_0 + 1*ETa_ETp_1 + 8*ETa_ETp_2 + 27*ETa_ETp_3 + 64*ETa_ETp_4+ 
+                  125*ETa_ETp_5)) #cubic
+
+```
+Note models are not fitted during knitting the pdf, due to time issues. The time for fitting one model can be up to 2 h, depending on the computer power. However the code is given for fitting the models, as # comments.
+
+```{r drought2, echo = T, message=F,warning=F,fig.align = "center"}
+# brms_poly_lags_drought <- brm( trees_died | trials(trees_died + trees_living)  ~
+#                             
+#                          u0 + u1 + u2 + u3 +
+#                             
+#                           (1|sites),
+#                           data = mydata,
+#                           family=zero_inflated_binomial(link = "logit"))
+
+# saveRDS(brms_poly_lags_drought,
+#         file = "models/brms_poly_lags_drought")
+ #read it in again
+brms_poly_lags_drought<-readRDS(file = "models/brms_poly_lags_drought_new") # 
+
+
+# without u3
+# brms_poly_lags_drought_1 <- brm( trees_died | trials(trees_died + trees_living)  ~
+#                                  
+#                                  u0 + u1 + u2 +
+#                                  
+#                                  (1|sites),
+#                                data = mydata,
+#                                family=zero_inflated_binomial(link = "logit"))
+# 
+# saveRDS(brms_poly_lags_drought_1,
+#         file = "models/brms_poly_lags_drought_1")
+#read it in again
+brms_poly_lags_drought_1<-readRDS(file = "models/brms_poly_lags_drought_1_new") # 
+
+
+# without u2
+# brms_poly_lags_drought_2 <- brm( trees_died | trials(trees_died + trees_living)  ~
+#                                    
+#                                    u0 + u1 +
+#                                  
+#                                  (1|sites),
+#                                  data = mydata,
+#                                  family=zero_inflated_binomial(link = "logit"))
+# 
+# saveRDS(brms_poly_lags_drought_2,
+#         file = "models/brms_poly_lags_drought_2")
+#read it in again
+brms_poly_lags_drought_2<-readRDS(file = "models/brms_poly_lags_drought_2_new") # 
+
+
+# without u1
+# brms_poly_lags_drought_3 <- brm( trees_died | trials(trees_died + trees_living)  ~
+#                                    
+#                                    u0 + 
+#                                  
+#                                  (1|sites),
+#                                  data = mydata,
+#                                  family=zero_inflated_binomial(link = "logit"))
+# 
+# saveRDS(brms_poly_lags_drought_3,
+#         file = "models/brms_poly_lags_drought_3")
+#read it in again
+brms_poly_lags_drought_3<-readRDS(file = "models/brms_poly_lags_drought_3_new") # 
+
+
+# Model comparison: Bayesian model evaluation using leave-one-out cross-validation (loo) 
+# see Vehtari 2017.
+ 
+# loo_compare(loo(brms_poly_lags_drought),loo(brms_poly_lags_drought_1),
+# loo(brms_poly_lags_drought_2), loo(brms_poly_lags_drought_3))
+
+# elpd_diff se_diff
+# brms_poly_lags_drought     0.0       0.0  
+# brms_poly_lags_drought_1 -44.5      24.7  
+# brms_poly_lags_drought_3 -59.9      37.6  
+# brms_poly_lags_drought_2 -62.9      38.9 
+
+# brms_poly_lags_drought best model
+
+# waic(brms_poly_lags_drought)
+# Estimate    SE
+# elpd_waic  -1395.9 122.1
+# p_waic       242.9  46.7
+# waic        2791.7 244.2
+
+# waic(brms_poly_lags_drought_1)
+# Estimate    SE
+# elpd_waic  -1434.4 128.2
+# p_waic       259.8  50.4
+# waic        2868.7 256.4
+
+# waic(brms_poly_lags_drought_2)
+# Estimate    SE
+# elpd_waic  -1449.8 128.8
+# p_waic       255.9  47.8
+# waic        2899.5 257.5
+
+
+# waic(brms_poly_lags_drought_3)
+# Estimate    SE
+# elpd_waic  -1448.9 126.5
+# p_waic       250.8  46.0
+# waic        2897.8 253.0
+
+# lagged effects plot of best poly lag model 
+model <- brms_poly_lags_drought
+
+
+summary(model)
+
+# extract mean posterior distribution estimates of Bayesian model fit
+coeff_poly_lag<-summary(model)$fixed
+coeff_poly_lag <- coeff_poly_lag%>%
+  dplyr::select(Estimate)
+
+coeff_poly_lag<-as.data.frame(t(coeff_poly_lag))
+
+### extraction of parameter estimates and their covariance matrix
+
+beta_1 <- coeff_poly_lag %>%
+  dplyr::select(u0, u1, u2, u3)
+
+
+beta<-as.numeric(beta_1)
+
+c<-vcov(model, full = TRUE)#variance-coveariance matrix for a fitted model without intercept
+
+c_<-as.matrix(c[2:5, 2:5]) #matrix 4 u
+
+
+### generation of matrix for the computation of the effects at different lags
+# with 6 lags (lag 0- lag5) and 4 u (u0-u3):
+(w<-rep(c(5,4,3,2,1,0),4)) #lag 0 - lag5  & u0, u1, u2, u3
+(e<-c(rep(0,6),rep(1,6),rep(2,6),rep(3,6))) #lag 0 - lag5  & u0, u1, u2, u3
+
+
+w_<-w^e
+
+ dim(w_)<-c(6,4) #lag 0 - lag5  & u0, u1, u2, u3
+
+
+### computation of the lagged effects and of their covariance matrix
+beta_<-w_%*%beta #  matrix multiplication
+
+# or manual calculation without matrix multiplication
+beta<-as.data.frame((beta_1))
+lag_effects<-     as.data.frame(t(beta$u0+ (beta$u1*(0^1))+ (beta$u2*(0^2))+ (beta$u3*(0^3)) ))
+lag_effects$lag1<-as.data.frame(t(beta$u0+ (beta$u1*(1^1))+ (beta$u2*(1^2))+ (beta$u3*(1^3)) ))
+lag_effects$lag2<-as.data.frame(t(beta$u0+ (beta$u1*(2^1))+ (beta$u2*(2^2))+ (beta$u3*(2^3)) ))
+lag_effects$lag3<-as.data.frame(t(beta$u0+ (beta$u1*(3^1))+ (beta$u2*(3^2))+ (beta$u3*(3^3)) ))
+lag_effects$lag4<-as.data.frame(t(beta$u0+ (beta$u1*(4^1))+ (beta$u2*(4^2))+ (beta$u3*(4^3)) ))
+lag_effects$lag5<-as.data.frame(t(beta$u0+ (beta$u1*(5^1))+ (beta$u2*(5^2))+ (beta$u3*(5^3)) ))
+
+colnames(lag_effects)<-c("lag0","lag1","lag2","lag3","lag4","lag5")
+lag_effects<-as.data.frame(t(lag_effects))
+colnames(lag_effects)<-c("lag_effects")
+lag_effects$lag<-rownames(lag_effects)
+lag_effects
+
+covb<-w_%*%c_%*%t(w_)
+covb
+### computation of the vector of standard errors of the lagged effects
+se<-sqrt(diag(covb))
+
+### Odds ratios associated with different lags, with 95%-confidence intervals
+or<-exp(beta_)
+ci95lo<-exp(beta_-1.96*se)
+ci95up<-exp(beta_+1.96*se)
+cbind(w_[,2],or,ci95lo,ci95up)
+
+### If one wants to stay at the level of logits
+ci95lo<-beta_-1.96*se
+ci95up<-beta_+1.96*se
+lag_effects_matrix<-cbind(w_[,2],beta_,ci95lo,ci95up)
+lag_effects_matrix<-as.data.frame(lag_effects_matrix)
+colnames(lag_effects_matrix)<-c("lag", "lag_effects", "ci95lo","ci95up" )
+lag_effects_matrix$lag<-c("lag5","lag4","lag3","lag2","lag1","lag0")
+lag_effects_matrix$lags<-c("lag 5 years","lag 4 years","lag 3 years","lag 2 years","lag 1 year",
+                           "no lag effect")
+
+lag_effects_matrix <- lag_effects_matrix %>% mutate(lags = fct_reorder(lags,lag))# order
+
+
+
+
+# drought lagged arithmetic mean
+mydata$drought_lag <- (mydata$ETa_ETp_0 + mydata$ETa_ETp_1 + mydata$ETa_ETp_2 + mydata$ETa_ETp_3+ 
+                         mydata$ETa_ETp_4)/5
+
+
+mydata$drought_lag_s<-scale(mydata$drought_lag, center=TRUE, scale=TRUE)
+```
+\clearpage
+## Lag effect plots
+
+```{r lagplot, echo = T, message=F,warning=F,fig.align = "center",fig.width=5,fig.height=5}
+
+lag_effects_matrix$signif<- c("no","no", "yes", "yes", "yes", "yes")
+lag_effects_matrix<-lag_effects_matrix %>% filter(!lag=="lag5")
+
+lag_effects_plot_drought<-ggplot(lag_effects_matrix,aes(x=lags,y=lag_effects)) + 
+  geom_hline(yintercept=0, linetype="dotted", size=0.3) +
+  geom_errorbar(aes(x=lags,y=lag_effects,ymin=ci95lo, ymax=ci95up), 
+                width=.000001,size=0.5) +
+  geom_point(aes(fill=signif),size=1.5, position = position_dodge(width = 0.8),
+             pch=21,show.legend = F)+
+  scale_fill_manual(values = c("white", "black"))+
+  theme_bw()+ 
+  ggtitle( TeX("Drought indicator ETa/ETp"))+ 
+  coord_flip()+
+  labs(x="", y="Estimates lag effects")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  theme(axis.ticks.x=element_line(size=0.1),axis.ticks.y=element_blank(),
+        axis.line=element_line(),axis.line.x=element_line(size=0.1),
+        axis.line.y=element_blank(),axis.title.x = element_text(size=4),
+        axis.text.x  = element_text(size=4), 
+        axis.text.y  = element_text(size=5),title = element_text(size=6))+
+  theme(plot.title = element_text(hjust = 0.5))
+lag_effects_plot_drought
+```
+\clearpage
+# Correlation analysis
+```{r corr_analysis, echo = T, message=F,warning=F,fig.align = "center"}
+
+var<-mydata[,c( "drought_lag_s",
+                "k_s","p_s","age_s","year_s","n_dep_s","bs_s")] #final model
+
+sort(vif(var))
+```
+```{r corr_analysis2, echo = T, message=F,warning=F,fig.align = "center"}
+
+source("Numerical_ecology_with_R_functions.R") #for cor.mtest function and ev plot
+#rcorr Computes a matrix of Pearson's r rank correlation coefficients
+res2 <- rcorr(as.matrix(var),type="pearson")
+(p.mat <- cor.test.p(var))
+
+
+```
+Final variable selection for Bayesian zero-inflated binomial multilevel resgression: VIF: <1.8, r<=0.51 r< 0.65 in line with [@Brandl2020].
+
+
+
+\clearpage
+# Cross-correlation analysis crown damage vs. mortality
+```{r CCV_analysis, echo = T, message=F,warning=F,fig.align = "center"}
+
+# load crown defoliation data
+crown_def<- read_delim("data/crown_def_data_spruce_2021.csv")
+crown_def <- crown_def %>% mutate(year_fact=as.factor(as.character(year))) %>% 
+  dplyr::select(-year)
+mort_data <- mortality_rate %>% mutate(year_fact=as.factor(as.character(year_fact)))
+mort_crow_data <- mort_data %>% left_join(crown_def,by="year_fact")
+# passing to a long format
+mort_crow_data<- mort_crow_data %>% mutate(date=as.POSIXct(year_fact, format = "%Y")) 
+ 
+ long_tbl <- mort_crow_data%>%
+  dplyr::select(date, 'Annual mean spruce crown damage > 25%'=mean_PROZ23, 
+                'Annual mean spruce mortality'=mortality )%>%
+  pivot_longer(cols = c('Annual mean spruce crown damage > 25%', 
+                        'Annual mean spruce mortality'), names_to = "names", values_to = "value")
+# the series with timetk package
+time_series_plot<-long_tbl %>% 
+  plot_time_series(.date_var = date,.value = value,.facet_vars = names, .title = "",
+                   .x_lab = "", .y_lab = "Annual mean values (%)", .line_color = "black", 
+                   .smooth_span=0.6, .smooth_color="grey")
+time_series_plot
+
+```
+## CCF plot
+```{r CCV_analysis2, echo = T, message=F,warning=F,fig.align = "center"}
+
+# The cross correlation function is helpful for identifying lags of the x-variable 
+# that might be useful predictors of yt
+
+
+ccf(mort_crow_data$mean_PROZ23,mort_crow_data$mortality,
+    main="",
+    ylab = "CCF",
+oma=c(2, 3, 5, 2))
+mytitle = "Cross-correlation"
+mysubtitle = "Annual mean spruce crown damage > 25% vs. Annual mean spruce mortality"
+mtext(side=3, line=2, at=-12, adj=0, cex=1.5, mytitle)
+mtext(side=3, line=1, at=-12, adj=0, cex=1, mysubtitle)
+```
+
+## Plot crown defoliation >25% vs. mortality
+```{r CCV_analysis3, echo = T, message=F,warning=F,fig.align = "center"}
+
+
+mort_crow_data<-mort_crow_data %>% 
+    mutate(mean_PROZ23_lag_1 = dplyr::lag(mean_PROZ23,1),
+           mean_PROZ23_lag_2 = dplyr::lag(mean_PROZ23,2),
+           mean_PROZ23_lag_3 = dplyr::lag(mean_PROZ23,3),
+           mean_PROZ23_lag_4 = dplyr::lag(mean_PROZ23,4))
+
+# mean_PROZ23 lagged arithmetic mean
+(mort_crow_data$mean_PROZ23_lag <- (mort_crow_data$mean_PROZ23 + mort_crow_data$mean_PROZ23_lag_1)/2)
+
+#  spearman’s ranked correlation coefficient -> best correlation R=0.34,p=0.04
+defoliation_plot<-ggplot(mort_crow_data, aes(y=mortality, x=mean_PROZ23_lag, colour=date)) +
+  geom_point(size=2)+
+     geom_smooth(method = "loess", span=0.9, colour="black",se = T, size=1)+
+   scale_x_continuous(breaks = c(10,15,20,25))+
+  scale_y_continuous(breaks = c(0,1,2,3,4,5))+
+  geom_text(aes(label=year_fact),hjust=-0.3, vjust=-1, size=1.5)+
+  annotate("text", x = 14, y = 5.2, size = 2.5,  colour="grey20",label = 
+             expression(paste("Spearman's rank correlation coefficient\nR=0.36, p=0.032"))
+           ,hjust = 1)+
+  labs(title="",y= expression(paste("Annual mean spruce mortality rate (%)")), 
+       x = "Lagged annual mean values of spruce with crown damages >25% (%)")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  theme(legend.position = c(""),legend.title=element_blank())+
+  coord_cartesian(ylim = c(0.1, 5.3)) # Zoom without cutting values
+defoliation_plot
+```
+
+\clearpage
+
+
+
+# Bayesian generalised multivariate multilevel binomial regression
+The time for fitting one the Bayesian generalised multivariate multilevel binomial regression models can be several hours, depending on the computer power. However the code is given for fitting the models, as # comments.
+
+```{r brms, echo = T, message=F,warning=F,fig.align = "center"}
+# Note model selection is not shown here in order to save space (>200 lines of code 
+# for comparing 25 differen models).
+# brms_fit_final <- brm( trees_died | trials(trees_died + trees_living)  ~ # tree mortality
+#                               drought_lag_s * n_dep_s + # drought indicator with 
+# N deposition interaction
+#                               bs_s +  # soil base saturation
+#                               year_s + # missing time trend, not explained by other predictors
+#                               age_s + # stand age
+#                               p_s * n_dep_s + # foliar nutrients Phosphorus with 
+# N deposition interaction 
+#                               k_s  + # foliar nutrients Potassium
+#                               (1|sites), # sites as random variable
+#                             data = mydata,
+#                             family=zero_inflated_binomial(link = "logit"), 
+# chains = 4, iter=10000 )
+
+
+#read it in again
+brms_fit_final<-readRDS(file = "models/brms_fit_final_new_3") 
+mod<-brms_fit_final
+summary(mod)
+
+```
+## R-squared
+R-squared for Bayesian regression models[@Gelman2019].
+```{r brms2, echo = T, message=F,warning=F,fig.align = "center"}
+
+# Bayesian version of R-squared for regression models, only fixed effects
+bayes_R2(mod)  
+```
+\clearpage
+## posterior predictive checks
+Perform posterior predictive checks with the help of the bayesplot package [@Gabry2019].
+
+
+```{r brms3, echo = T, message=F,warning=F,fig.align = "center"}
+
+pp_check(mod, ndraws = 50)
+```
+## posterior distribution plot
+
+```{r brms4, echo = T, message=F,warning=F,fig.align = "center"}
+
+sum_table<-summary(mod)$fixed
+sum_table<- sum_table %>% mutate(Bulk_ESS = as.character(round(Bulk_ESS,0)),
+                                 Tail_ESS = as.character(round(Tail_ESS,0)))
+
+colnames(sum_table) <- c ("Estimate" , "SD","Lower 95% CI" ,  "Upper 95% CI" , "Rhat" , 
+                          "Bulk ESS" , "Tail ESS")
+xtable(sum_table)
+
+posterior_table_plot <- as.data.frame(fixef(mod)) %>%   droplevels() 
+  
+posterior_table_plot$fixed<-row.names(posterior_table_plot)
+
+posterior_table_plot <-  posterior_table_plot %>% subset(!posterior_table_plot$fixed=="Intercept") %>%
+  mutate(significant_negativ = ifelse(Estimate <0 & Q2.5 <0 & Q97.5 <0  ,"yes","no")) %>%
+  mutate(significant_positiv = ifelse(Estimate>0 & Q2.5 >0 & Q97.5 >0  ,"yes","no")) %>%
+  mutate(significant = ifelse(significant_negativ== "yes" | significant_positiv== "yes" ,"yes","no"))
+
+# rename
+ posterior_table_plot$fixed<-c("Drought lag","N deposition", "Base saturation","Year", 
+                               "Stand age", "Phosphorus", "Potassium", "Drought lag:N deposition",
+                               "Phosphorus:N deposition")
+
+# reorder 
+posterior_table_plot <- posterior_table_plot %>% mutate(fixed = fct_reorder(fixed, -Estimate))# order
+
+
+coeff_plot<-ggplot(posterior_table_plot,aes(x=fixed,y=Estimate)) + 
+  geom_hline(yintercept=0, linetype="dotted", size=0.2) +
+  geom_errorbar(aes(x=fixed,y=Estimate,ymin=Q2.5 , ymax=Q97.5), width=.00001,size=0.5) +
+  geom_point(size=2, position = position_dodge(width = 0.8), aes(shape=significant))+
+  theme_bw()+ 
+  scale_shape_manual(values=c(1,16))+
+  scale_x_discrete(limits = rev(levels(posterior_table_plot$fixed)))+
+  coord_flip()+
+  labs(x="", y="Fixed effect estimates")+
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())+
+  theme(axis.ticks.x=element_line(size=0.1),axis.ticks.y=element_blank(),
+        axis.line=element_line(),axis.line.x=element_line(size=0.1),
+        axis.line.y=element_blank(),axis.title.x = element_text(size=6),
+        axis.text.x  = element_text(size=4), axis.text.y  = element_text(size=8),
+        legend.position = "")
+coeff_plot
+```
+\clearpage
+## effect plots
+### effect plot n_dep_s
+```{r brms5, echo = T, message=F,warning=F,fig.align = "center"}
+
+brms_pred<-conditional_effects(mod, "n_dep_s")$n_dep_s
+
+brms_pred$effect1__<-(sd(mydata$n_dep)*brms_pred$effect1__)+mean(mydata$n_dep) 
+# un-scaling z-transf
+
+brms_effect_plot_n_dep<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+     geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.48),
+                                             labels = scales::percent_format(accuracy = 1))+
+  labs( x = expression(paste("N deposition (kg N ", ha^-1, " ", a^-1, ")")),
+        y = "Mortality Picea abies")+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x = element_text(size =12, colour = "black"),
+        axis.line.x=element_line(size = 0.1),
+        axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.1),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+        legend.title=element_text(),
+        legend.justification = c(1, 1), legend.position = c(1,1),legend.direction="horizontal",legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")
+brms_effect_plot_n_dep
+```
+
+### effect plot drought_lag_s
+```{r brms6, echo = T, message=F,warning=F,fig.align = "center"}
+brms_pred<-conditional_effects(mod, "drought_lag_s")$drought_lag_s
+
+brms_pred$effect1__<-(sd(mydata$drought_lag)*brms_pred$effect1__)+mean(mydata$drought_lag) 
+# un-scaling z-transf
+
+brms_effect_plot_drought_lag<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+     geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.48),
+                                             labels = scales::percent_format(accuracy = 1))+
+  labs( x = "Drought (ETa/ETp)",y = "Mortality Picea abies")+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14,colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x = element_text(size =12, colour = "black"),
+        axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.1),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),
+        legend.background=element_blank(),
+        legend.title=element_text(),
+        legend.justification = c(1, 1), legend.position = c(1,1),legend.direction="horizontal",legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")+
+  scale_x_reverse()
+brms_effect_plot_drought_lag
+```
+### effect plot drought_lag_s:n_dep_s
+```{r brms7, echo = T, message=F,warning=F,fig.align = "center"}
+
+## unscaling N-deposition
+
+nd <- -0.607 ## 20.00779
+nd <- 0.477 ## 30.00437
+nd <- 1.561## 40.00096
+
+(sd(mydata$n_dep)*nd+mean(mydata$n_dep))
+
+brms_pred<-conditional_effects(mod, "drought_lag_s:n_dep_s",
+ int_conditions = list(n_dep_s=c( -0.607,0.477,1.561)))$drought_lag_s
+
+
+
+brms_pred$effect1__<-(sd(mydata$drought_lag)*brms_pred$effect1__)+mean(mydata$drought_lag) 
+# un-scaling z-transf
+
+col.1<-"#d7191c" #red
+col.2<-"#fdae61"
+col.3<-"#abd9e9"
+col.4<-"#2c7bb6" #blue
+
+brms_effect_plot_drought_lag_s_n_dep_s<-ggplot(brms_pred,aes(x=effect1__,
+                          y=estimate__,color=effect2__,fill=effect2__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,
+              show.legend = F,size=0.0001) +
+   geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.48),
+                                           labels = scales::percent_format(accuracy = 1))+
+  labs(y="Mortality Picea abies", x="Drought (ETa/ETp)",
+       col=expression(atop("N deposition", paste("(kg N ",ha^-1, a^-1,")"))))+
+  scale_fill_manual(values=c(col.1,col.2,col.4))+
+  scale_colour_manual(values=c(col.1,col.2,col.4), label=c("40","30","20"))+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14, 
+        colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x = element_text(size =12, colour = "black"),
+        axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.1),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+        legend.title=element_text(),legend.justification = c(1, 1), 
+        legend.position = c(1,1),legend.direction="horizontal",
+        legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99)
+        ,legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")+
+  scale_x_reverse( limits=c(1,0.7))                                             
+
+brms_effect_plot_drought_lag_s_n_dep_s
+```
+
+### effect plot p_s:n_dep_s
+```{r brms8, echo = T, message=F,warning=F,fig.align = "center"}
+## unscaling N-deposition
+
+nd <- -0.607 ## 20.00779
+nd <- 0.477 ## 30.00437
+nd <- 1.561## 40.00096
+
+(sd(mydata$n_dep)*nd+mean(mydata$n_dep))
+
+brms_pred<-conditional_effects(mod, "p_s:n_dep_s",
+            int_conditions = list(n_dep_s=c( -0.607,0.477,1.561)))$p_s
+
+
+brms_pred$effect1__<-(sd(mydata$p, na.rm=T)*brms_pred$effect1__)+
+  mean(mydata$p, na.rm=T) # un-scaling z-transf
+
+col.1<-"#d7191c" #red
+col.2<-"#fdae61"
+col.3<-"#abd9e9"
+col.4<-"#2c7bb6" #blue
+
+brms_effect_plot_p_s_n_dep_s<-ggplot(brms_pred,aes(x=effect1__,
+                y=estimate__,color=effect2__,fill=effect2__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,
+              show.legend = F,size=0.0001) +
+   geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.48),
+                labels = scales::percent_format(accuracy = 1))+
+    scale_x_continuous( limits=c(0.59, 1.5))+
+  geom_vline(aes(xintercept  =1.30), linetype="dashed", 
+             size=0.5)+ #lower threshold for normal nutrition Gottlein2016
+     labs(y="Mortality Picea abies", x=expression(paste(
+       "Foliar phosphorus content (mg ",g^{-1}," dm)")),
+       col=expression(atop("N deposition", paste("(kg N ",ha^-1, a^-1,")"))))+
+  scale_fill_manual(values=c(col.1,col.2,col.4))+
+  scale_colour_manual(values=c(col.1,col.2,col.4), 
+                      label=c("40","30","20"))+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+  axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+  axis.text.x = element_text(size =12, colour = "black"),
+  axis.line.x=element_line(size = 0.1),
+  axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", 
+        fill=NA, size=0.1),panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+        legend.title=element_text(),legend.justification = c(1, 1), 
+        legend.position = c(1,1),legend.direction="horizontal",
+        legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), 
+        legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")
+brms_effect_plot_p_s_n_dep_s
+```
+### effect plot age_s
+```{r brms9, echo = T, message=F,warning=F,fig.align = "center"}
+
+brms_pred<-conditional_effects(mod, "age_s")$age_s
+
+brms_pred$effect1__<-(sd(mydata$age)*brms_pred$effect1__)+mean(mydata$age) # un-scaling z-transf
+
+brms_effect_plot_age<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+    geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.48),
+                                            labels = scales::percent_format(accuracy = 1))+
+  labs( x="Stand age (a)",y = "Mortality Picea abies")+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+  axis.text.x = element_text(size =12, colour = "black"),axis.line.x=element_line(size = 0.1),
+  axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA,size=0.1),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+        legend.title=element_text(),legend.justification = c(1, 1), 
+        legend.position = c(1,1),legend.direction="horizontal",
+        legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")
+brms_effect_plot_age
+```
+
+### effect plot p_s
+```{r brms10, echo = T, message=F,warning=F,fig.align = "center"}
+
+brms_pred<-conditional_effects(mod, "p_s")$p_s
+
+brms_pred$effect1__<-(sd(mydata$p,na.rm=T)*brms_pred$effect1__)+mean(mydata$p,na.rm=T) 
+# un-scaling z-transf
+
+brms_effect_plot_p<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+  geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.048),
+                                          labels = scales::percent_format(accuracy = 1))+
+  geom_vline(aes(xintercept  =1.30), linetype="dashed", size=0.5)+
+  #lower threshold for normal nutrition Gottlein2016
+labs(x=expression(paste("Foliar phosphorus content (mg ",g^{-1}," dm)")),
+     y = "Mortality Picea abies")+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x = element_text(size =12, colour = "black"),
+        axis.line.x=element_line(size = 0.1),
+        axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=0.1),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),
+        legend.title=element_text(),
+      legend.justification = c(1, 1), 
+      legend.position =c(1,1),legend.direction="horizontal",
+      legend.key.height=unit(1,"line"),
+      plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")
+brms_effect_plot_p
+```
+
+
+### effect plot year_s
+```{r brms11, echo = T, message=F,warning=F,fig.align = "center"}
+
+brms_pred<-conditional_effects(mod, "year_s")$year_s
+
+ brms_pred$effect1__<-(sd(as.numeric(as.character(mydata$year)))*brms_pred$effect1__)+
+   mean(as.numeric(as.character(mydata$year))) # un-scaling z-transf
+
+brms_effect_plot_year<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+     geom_line(size=1.5)+scale_y_continuous( limits=c(0,0.048),
+                          labels = scales::percent_format(accuracy = 1))+
+  labs( x="Year",y = "Mortality Picea abies")+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+        axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x = element_text(size =12, colour = "black"),
+        axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),panel.border = element_rect(colour = "black", 
+            fill=NA, size=0.1),panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        legend.key=element_blank(),
+        legend.background=element_blank(),
+        legend.title=element_text(),legend.justification = c(1, 1), 
+        legend.position = c(1,1),
+        legend.direction="horizontal",
+        legend.key.height=unit(1,"line"),
+        plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+        legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")
+brms_effect_plot_year
+```
+
+
+\clearpage
+
+# Bayesian change-point regression model with brms
+Concerning the applied method of hierarchical change-point regression models including random effects to estimate empirical critical loads for nitrogen using Bayesian Regression Models (brms) see [@Roth2022a].
+
+
+The time for fitting one the Bayesian generalised multivariate multilevel binomial regression models can be several hours, depending on the computer power. However the code is given for fitting the models, as # comments.
+
+```{r BCR, echo = T, message=F,warning=F,fig.align = "center"}
+
+ ###6.1 CLempN estimation####
+
+ # # binomial approch
+ # # Full model approach with interaction without random intercepts
+ # # CPR with interaction of drought
+# mydata<- mydata%>% group_by(sites, year)%>%
+#    mutate (n_trees= sum(trees_died,trees_living)) %>% ungroup()
+#  mydata$Ndep <- mydata$n_dep #Time series data on total N deposition were based on results of the EMEP MSC-W model (0.1° resolution) (EMEP, 2019). 
+#  mydata$random<- as.integer(factor(mydata$sites)) #random effect sites
+#  
+#  mydata$fixeff1 <- mydata$p -0.94 # foliar Phosphorus concentrations
+#  mydata$fixeff2 <- mydata$k -4.28 # foliar K concentrations
+#  mydata$fixeff3 <-(sd(mydata$drought_lag_mean)*(mydata$drought_lag_poly*-1))+mean(mydata$drought_lag_mean) # un-scaling z-transf
+#  mydata$fixeff3 <- mydata$fixeff3 -2.14
+#  hist(mydata$fixeff3.1)
+# hist(mydata$fixeff3)
+#  
+#  mydata$fixeff4 <- mydata$bs -56 # differences in soil base saturation
+#  mydata$fixeff5 <- mydata$age -147  # stand age
+#  mydata$fixeff6 <- mydata$year -2006  # unexplained year trend, not covered by other fixed effects
+#  
+#  
+#  changepoint_model <- brmsformula(
+#    trees_died | trials(n_trees) ~ beta0 + beta1 * fixeff1 + beta2 * fixeff2 + beta3 * fixeff3 + beta4 * fixeff4 + beta5 * fixeff5 + beta6 * fixeff6 +
+#      step(Ndep - CLempN) * betaN * (Ndep - CLempN)+ #steps of CLempN regression
+#      betaNint * step(Ndep - CLempN) * (Ndep - CLempN)  * fixeff3, #interaction with drought
+#    CLempN ~ 1+ (1|random), #group level effect 
+#    beta0 ~ 1+ (1|random), #group level effect 
+#    beta1 + betaN + betaNint + beta2 + beta3 + beta4+ beta5+ beta6 ~ 1,
+#    nl = T,
+#    family = binomial
+#  )
+#  
+#   # Priors
+#  bprior <- 
+#    # prior(normal(0, 2), nlpar = "beta0") +
+#    prior(normal(10, 5), nlpar = "beta0") +
+#    prior(normal(10, 5), nlpar = "CLempN")+
+#    prior(normal(0, 2),  nlpar = "betaN") + #vague priors
+#    prior(normal(0, 2),  nlpar = "betaNint") + #vague priors
+#    
+#    prior(normal(0, 2),  nlpar = "beta1") + #vague priors
+#    prior(normal(0, 2),  nlpar = "beta2") + #vague priors
+#    prior(normal(0, 2),  nlpar = "beta3") + #vague priors
+#    prior(normal(0, 2),  nlpar = "beta4") + #vague priors
+#    prior(normal(0, 2),  nlpar = "beta5") + #vague priors
+#    prior(normal(0, 2),  nlpar = "beta6")   #vague priors
+#  
+#  # Model fit with brms::brm using Stan
+#  CPR_brms <- brms::brm(changepoint_model, 
+#                        family = binomial,
+#                        data = mydata, 
+#                        prior = bprior, 
+#                        chains = 2, 
+#                        cores = 4, 
+#                        warmup = 1000,
+#                        thin = 2,
+#                        iter=10000)
+#  # # Save  object to file 
+#  saveRDS(CPR_brms,
+#          file = "models/CPR_brms_final_model_final")
+
+
+CPR_brms<-readRDS(file = "models/CPR_brms_final_model_final")
+ 
+summary(CPR_brms)
+```
+Rhat should be < 1.1 [@Koontz2021].
+
+## R-squared
+```{r BCR2, echo = T, message=F,warning=F,fig.align = "center"}
+
+
+bayes_R2(CPR_brms) 
+```
+R-squared for Bayesian regression models according to [@Gelman2019]. 
+
+## posterior predictive checks
+Perform posterior predictive checks with the help of the bayesplot package [@Gabry2019].
+```{r BCR3, echo = T, message=F,warning=F,fig.align = "center"}
+pp_check(CPR_brms, ndraws = 50)
+
+```
+\clearpage
+
+## effect plot interaction drought
+
+```{r BCR5, echo = T, message=F,warning=F,fig.align = "center"}
+
+brms_pred<- brms::conditional_effects(CPR_brms, "Ndep:fixeff3",int_conditions = list(fixeff3=c( 0.02,-0.03,-0.13)))$Ndep
+
+col.1<-"#d7191c" #red
+col.2<-"#fdae61"
+col.3<-"#abd9e9"
+col.4<-"#2c7bb6" #blue
+
+brms_effect_plot_ClempN_drought_lag<-ggplot(brms_pred,aes(x=effect1__,y=estimate__,color=effect2__,fill=effect2__))+
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+  geom_line(size=1.5)+
+   scale_y_continuous( labels = scales::percent_format(accuracy = 1),breaks=c(0,0.02,0.04,0.06,0.08,0.1))+
+   scale_x_continuous( breaks=c(0,10,20,30,40,50,60,70,80))+
+  
+  geom_segment(aes(x = 9.47 , y = -1, xend = 9.47, yend = 0.078),linetype="solid",size=0.5, colour="grey20")+
+  geom_segment(aes(x = 2.23, y = -1, xend = 2.23, yend = 0.078),linetype="dotted",size=0.5, colour="grey20")+
+  geom_segment(aes(x = 16.28 , y = -1, xend = 16.28, yend = 0.078),linetype="dotted",size=0.5, colour="grey20")+
+  annotate("text", x = 15.4, y = 0.08, size = 2.8,  colour="grey20",label = expression(paste("CLempN estimation")),hjust = 1)+
+  
+  labs(y="Mortality Picea abies", x=expression(paste("N deposition (kg N ", ha^-1, " ", a^-1, ")")),col=expression("Drought (ETa/ETp)"))+
+  scale_fill_manual(values=c(col.4,col.2,col.1))+
+  scale_colour_manual(values=c(col.4,col.2,col.1), label=c("0.9","0.85","0.75"))+
+  theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),axis.text.x = element_text(size =12, colour = "black"),axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+  theme(panel.background=element_blank(),panel.border = element_rect(colour = "black", fill=NA, size=0.1),panel.grid.minor=element_blank(),panel.grid.major=element_blank(),
+        legend.key=element_blank(),legend.background=element_blank(),legend.title=element_text(),legend.justification = c(1, 1), legend.position = c(1,1),legend.direction="horizontal",legend.key.height=unit(1,"line"),plot.title = element_text(hjust = 0.5))+
+  theme(legend.justification = c(1, 1), legend.position = c(0.9998,0.99),legend.direction="vertical")+
+  theme(legend.title=element_text(size=10),legend.box.just = "left")+
+ coord_cartesian(ylim = c(0.002, 0.08),
+                 xlim= c(0,60)) # Zoom without cutting values
+brms_effect_plot_ClempN_drought_lag 
+
+```
+
+\clearpage
+
+
+
+# pinpoint method approach
+The pinpoint method approach adapted according to [@Bobbink2010a].
+
+```{r BCR6, echo = T, message=F,warning=F,fig.align = "center"}
+ 
+
+mydata <- mydata %>%
+  group_by(sites, year_fact) %>%
+   mutate(mortality = 100*trees_died/(trees_died+trees_living)) %>%
+  mutate(mortality = ifelse(is.na(mortality),0,mortality)) %>%
+ ungroup()
+
+mydata<-mydata %>%
+  mutate(Ndep_class=case_when(n_dep < 15 ~ "0-15",
+                             n_dep >= 15 & n_dep < 20.01 ~ "15-20",
+                             n_dep >= 20.01 & n_dep < 25.01 ~ "20-25",
+                             n_dep >= 25.01 & n_dep < 30.01 ~ "25-30",
+                             n_dep >= 30.01 ~ ">30")) %>%
+  mutate(Ndep_fact=as.factor(as.character(Ndep_class)))
+
+# # reorder factor levels for plot
+mydata<-mydata %>%
+  mutate(Ndep_fact=factor(Ndep_fact, levels= c("0-15","15-20","20-25"
+  ,"25-30",  ">30")))
+
+pinpoint_plot<-ggplot(data=mydata %>% dplyr::filter(mortality>0))+
+  geom_jitter(aes(x=Ndep_fact, y=mortality, color=year_fact),
+  position = position_jitter(0.2),size=3) + 
+  geom_boxplot(aes(x=Ndep_fact, y=mortality),alpha=0.1,outlier.shape = NA)+
+  labs(y="Annual mean spruce mortality rate for sites with observed mortality (%)",
+       x=expression(N~deposition~(kg~N~ha^-1~a^-1)))+
+  ylim(0,10)+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  theme(legend.position = c(0.09,0.88), axis.title.x=element_text(),
+  axis.text.x=element_text(size=12),
+  axis.ticks.x=element_blank(),legend.title=element_blank())
+
+pinpoint_plot
+```
+
+\clearpage
+
+# Bayesian change-point regression model with brms for a critical altitude
+Concerning the applied method of hierarchical change-point regression models including random effects to estimate empirical critical loads for nitrogen using Bayesian Regression Models (brms) see [@Roth2022a].
+
+
+The time for fitting one the Bayesian generalised multivariate multilevel binomial regression models can be several hours, depending on the computer power. However the code is given for fitting the models, as # comments.
+
+```{r BCRalit, echo = T, message=F,warning=F,fig.align = "center"}
+
+
+mydata<- mydata%>% group_by(sites, year)%>%
+ mutate (n_trees= sum(trees_died,trees_living)) %>% ungroup()
+ mydata$alti <- mydata$altitude # Altitude of sites
+ mydata$random<- as.integer(factor(mydata$sites)) #random effect sites
+
+ # #binomial only Calti random
+ # changepoint_model <- brmsformula(
+ #   trees_died | trials(n_trees) ~ beta0 + 
+ #     step(alti - CAlti) * betaAlti * (alti - CAlti), #steps of CAlti regression
+ #   CAlti ~ 1+ (1|random), #group level effect for CAlti
+ #   # beta0 ~ 1+ (1|random), #group level effect for beta0
+ #   beta0 + betaAlti ~ 1,
+ #   nl = T,
+ #   family = binomial
+ # )
+ # 
+ # 
+ # # Priors
+ # bprior <- 
+ #   prior(normal(0, 2), nlpar = "beta0") + 
+ #   prior(normal(800, 400), nlpar = "CAlti") + 
+ #   prior(normal(0, 2),  nlpar = "betaAlti")#vague priors
+ # 
+ # 
+ # # Model fit with brms::brm using Stan
+ # CPR_brms <- brms::brm(changepoint_model, 
+ #                       family = binomial,
+ #                       data = mydata, 
+ #                       prior = bprior, 
+ #                       chains = 2, 
+ #                       cores = 4, 
+ #                       warmup = 1000,
+ #                       thin = 2,
+ #                       iter=10000)
+ # # # Save  object to file 
+ # saveRDS(CPR_brms,
+ #         file = "models/CPR_brms_alti.4")
+ 
+ #read it in again
+ CPR_brms<-readRDS(file = "models/CPR_brms_alti.4") 
+summary(CPR_brms)
+
+```
+Rhat should be < 1.1 [@Koontz2021].
+
+## R-squared
+```{r BCRalti2, echo = T, message=F,warning=F,fig.align = "center"}
+
+
+bayes_R2(CPR_brms) 
+```
+R-squared for Bayesian regression models according to [@Gelman2019]. 
+
+## posterior predictive checks
+
+Perform posterior predictive checks with the help of the bayesplot package [@Gabry2019].
+
+```{r BCRalti3, echo = T, message=F,warning=F,fig.align = "center"}
+
+pp_check(CPR_brms, ndraws = 50)
+
+```
+\clearpage
+
+## effect plots
+```{r BCRalti4, echo = T, message=F,warning=F,fig.align = "center"}
+ brms_pred<-conditional_effects(CPR_brms, "alti")$alti
+ 
+ brms_effect_Alti<-ggplot(brms_pred,aes(x=effect1__,y=estimate__))+
+   geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = .1,show.legend = F,size=0.0001) +
+   geom_line(size=1.5)+
+   scale_y_continuous( labels = scales::percent_format(accuracy = 1),
+                       breaks=c(0,0.02,0.04,0.06,0.08,0.1))+
+   scale_x_continuous( )+
+   labs( x = expression(paste("Altitutde (m)")),y = "Mortality Picea abies")+
+   
+   geom_segment(aes(x = 527.89 , y = -1, xend =527.89 , yend = 0.078),
+                linetype="solid",size=0.5, colour="grey20")+
+   geom_segment(aes(x =141.52, y = -1, xend =141.52, yend = 0.078),
+                linetype="dotted",size=0.5, colour="grey20")+
+   geom_segment(aes(x = 968.77, y = -1, xend = 968.77, yend = 0.078),
+                linetype="dotted",size=0.5, colour="grey20")+
+   annotate("text", x = 750, y = 0.08, size = 2.8,  colour="grey20"
+            ,label = expression(paste("Estimated critical altitude")),hjust = 1)+
+
+   theme(axis.title=element_text(size=12),axis.ticks = element_line(size=0.1), 
+         axis.line=element_line(colour="black"),text = element_text(size=14, colour = "black"),
+         axis.text.y = element_text(size = 12, colour = "black"),
+         axis.text.x = element_text(size =12, colour = "black"),
+         axis.line.x=element_line(size = 0.1),axis.line.y=element_line(size = 0.1)) +
+   theme(panel.background=element_blank(),
+         panel.border = element_rect(colour = "black", fill=NA, size=0.1),
+         panel.grid.minor=element_blank(),panel.grid.major=element_blank(),
+         legend.key=element_blank(),legend.background=element_blank(),
+         legend.title=element_text(),legend.justification = c(1, 1), 
+         legend.position = c(1,1),legend.direction="horizontal",
+         legend.key.height=unit(1,"line"),plot.title = element_text(hjust = 0.5))+
+   theme(legend.justification = c(1, 1), legend.position = c(0.315,0.99),
+         legend.direction="vertical")+
+   theme(legend.title=element_text(size=10),legend.box.just = "left")+
+   coord_cartesian(ylim = c(0, 0.1)) # Zoom without cutting values
+ brms_effect_Alti
+```
+\clearpage
+## References
